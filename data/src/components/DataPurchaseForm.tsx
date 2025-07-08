@@ -16,6 +16,7 @@ import {
   CircularProgress,
   Alert,
 } from '@mui/material';
+import { getDataPlans, purchaseData, DataPlan } from '../libs/vtuApi';
 
 const schema = z.object({
   phone: z.string().min(11, 'Phone number must be 11 digits').max(11),
@@ -32,22 +33,15 @@ const networks = [
   { id: 'etisalat', name: '9mobile' },
 ];
 
-interface DataPlan {
-  id: number;
-  plan: string;
-  amount: string;
-  validity: string;
-}
-
 export const DataPurchaseForm = () => {
   const [plans, setPlans] = useState<DataPlan[]>([]);
   const [loadingPlans, setLoadingPlans] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
-  const [apiError, setApiError] = useState<string | null>(null);
   const [purchaseResult, setPurchaseResult] = useState<{
     success: boolean;
     message: string;
   } | null>(null);
+  const [apiError, setApiError] = useState<string | null>(null);
 
   const {
     register,
@@ -62,64 +56,45 @@ export const DataPurchaseForm = () => {
   const selectedNetwork = watch('network');
 
   React.useEffect(() => {
-    if (selectedNetwork) {
-      setLoadingPlans(true);
-      setApiError(null);
-      
-      fetch(`/api/data-plans?networkId=${selectedNetwork}`)
-        .then(async (response) => {
-          if (!response.ok) {
-            throw new Error(await response.text());
-          }
-          return response.json();
-        })
-        .then((data) => {
-          if (!data || data.length === 0) {
-            setApiError('No data plans available');
-          }
-          setPlans(data);
-        })
-        .catch((error) => {
-          console.error('Error:', error);
-          setApiError(error.message || 'Failed to load plans');
-        })
-        .finally(() => {
-          setLoadingPlans(false);
-        });
-    }
-  }, [selectedNetwork]);
+  if (selectedNetwork) {
+    setLoadingPlans(true);
+    setApiError(null);
+    
+    getDataPlans(selectedNetwork)
+      .then((data) => {
+        if (!data || data.length === 0) {
+          setApiError('No data plans available for this network');
+          return;
+        }
+        setPlans(data);
+      })
+      .catch((error) => {
+        console.error('Full error:', error);
+        setApiError(
+          error.message || 
+          'Server error occurred while fetching data plans'
+        );
+      })
+      .finally(() => {
+        setLoadingPlans(false);
+      });
+  }
+}, [selectedNetwork]);
 
   const onSubmit = async (data: FormData) => {
     setIsSubmitting(true);
     setPurchaseResult(null);
-    
     try {
-      const response = await fetch('/api/purchase-data', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          phone: data.phone,
-          networkId: data.network,
-          planId: data.plan,
-        }),
-      });
-
-      const result = await response.json();
-      
-      if (!response.ok) {
-        throw new Error(result.error || 'Purchase failed');
-      }
-
+      const result = await purchaseData(data.phone, data.network, data.plan);
       setPurchaseResult({
-        success: true,
-        message: result.message || 'Purchase successful',
+        success: result.status === 'success',
+        message: result.message,
       });
-    } catch (error: any) {
+    } catch (error) {
+      console.error('Purchase error:', error);
       setPurchaseResult({
         success: false,
-        message: error.message,
+        message: 'An error occurred during purchase',
       });
     } finally {
       setIsSubmitting(false);
@@ -172,7 +147,7 @@ export const DataPurchaseForm = () => {
         )}
       </FormControl>
 
-      <FormControl fullWidth margin="normal" error={!!errors.plan}>
+      <FormControl fullWidth margin="normal" error={!!errors.plan || !!apiError}>
         <InputLabel>Data Plan</InputLabel>
         <Select
           label="Data Plan"
@@ -187,12 +162,14 @@ export const DataPurchaseForm = () => {
             </MenuItem>
           ) : plans.length > 0 ? (
             plans.map((plan) => (
-              <MenuItem key={plan.id} value={plan.id.toString()}>
+              <MenuItem key={plan.id} value={plan.id}>
                 {plan.plan} - ₦{plan.amount} ({plan.validity})
               </MenuItem>
             ))
           ) : (
-            <MenuItem disabled>No plans available</MenuItem>
+            <MenuItem disabled>
+              No plans available
+            </MenuItem>
           )}
         </Select>
         {errors.plan && (
@@ -208,7 +185,7 @@ export const DataPurchaseForm = () => {
         color="primary"
         fullWidth
         sx={{ mt: 2 }}
-        disabled={isSubmitting}
+        disabled={isSubmitting || loadingPlans}
       >
         {isSubmitting ? <CircularProgress size={24} /> : 'Purchase Data'}
       </Button>

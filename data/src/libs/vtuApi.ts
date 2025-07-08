@@ -1,77 +1,110 @@
-import axios, { AxiosError } from 'axios';
+// libs/vtuApi.ts
+import axios, { AxiosError, AxiosResponse } from 'axios';
 
-interface DataPlan {
+// Type definitions
+export interface DataPlan {
   id: number;
   plan: string;
   amount: string;
   validity: string;
 }
 
-interface ApiResponse<T> {
+export interface PurchaseResponse {
   status: 'success' | 'failed';
   message: string;
-  data?: T;
+  data?: {
+    reference: string;
+    amount: string;
+  };
 }
 
+export interface VTUErrorResponse {
+  code: string;
+  message: string;
+  data: null;
+  additional_errors?: Array<{
+    code: string;
+    message: string;
+    data: null;
+  }>;
+}
+
+// Create axios instance with proper types
 const vtuApi = axios.create({
   baseURL: process.env.NEXT_PUBLIC_VTU_API_BASE_URL,
+  auth: {
+    username: process.env.NEXT_PUBLIC_VTU_API_USERNAME || '',
+    password: process.env.NEXT_PUBLIC_VTU_API_PASSWORD || '',
+  },
   headers: {
     'Content-Type': 'application/json',
   },
 });
 
-const getAuthHeader = () => {
-  const username = process.env.NEXT_PUBLIC_VTU_API_USERNAME;
-  const password = process.env.NEXT_PUBLIC_VTU_API_PASSWORD;
-  
-  if (!username || !password) {
-    throw new Error('VTU API credentials not configured');
-  }
+// Response data type for data plans
+interface DataPlansResponse {
+  data: DataPlan[];
+}
 
-  const token = Buffer.from(`${username}:${password}`).toString('base64');
-  return { Authorization: `Basic ${token}` };
-};
-
+// Enhanced getDataPlans with proper error handling
 export const getDataPlans = async (networkId: string): Promise<DataPlan[]> => {
   try {
-    const response = await vtuApi.get<ApiResponse<DataPlan[]>>('/data', {
-      params: { network_id: networkId },
-      headers: getAuthHeader(),
+    const response: AxiosResponse<DataPlansResponse> = await vtuApi.get('/data', {
+      params: {
+        network_id: networkId,
+      },
     });
 
-    if (!response.data.data) {
-      throw new Error('No data plans available');
+    if (!response.data?.data) {
+      throw new Error('Invalid data structure from API');
     }
 
     return response.data.data;
   } catch (error) {
-    const axiosError = error as AxiosError<ApiResponse<null>>;
+    const axiosError = error as AxiosError<VTUErrorResponse>;
+    
     console.error('VTU API Error:', {
       status: axiosError.response?.status,
-      message: axiosError.response?.data?.message,
+      data: axiosError.response?.data,
+      config: axiosError.config,
     });
-    throw new Error(axiosError.response?.data?.message || 'Failed to fetch data plans');
+
+    throw new Error(
+      axiosError.response?.data?.message || 
+      'Failed to fetch data plans. Please try again.'
+    );
   }
 };
 
+// Enhanced purchaseData with proper typing
 export const purchaseData = async (
   phone: string,
   networkId: string,
   planId: string
-): Promise<ApiResponse<{ reference: string }>> => {
+): Promise<PurchaseResponse> => {
   try {
-    const response = await vtuApi.get<ApiResponse<{ reference: string }>>('/data', {
+    const response: AxiosResponse<PurchaseResponse> = await vtuApi.get('/data', {
       params: {
         phone,
         network_id: networkId,
         plan_id: planId,
       },
-      headers: getAuthHeader(),
     });
+
     return response.data;
   } catch (error) {
-    const axiosError = error as AxiosError<ApiResponse<null>>;
-    console.error('Purchase Error:', axiosError.response?.data);
-    throw new Error(axiosError.response?.data?.message || 'Purchase failed');
+    const axiosError = error as AxiosError<VTUErrorResponse>;
+    
+    console.error('Purchase Error:', {
+      status: axiosError.response?.status,
+      data: axiosError.response?.data,
+    });
+
+    throw new Error(
+      axiosError.response?.data?.message ||
+      'Failed to complete purchase. Please try again.'
+    );
   }
 };
+
+export default vtuApi;
